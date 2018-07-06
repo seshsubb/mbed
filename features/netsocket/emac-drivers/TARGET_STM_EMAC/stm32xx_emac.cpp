@@ -4,11 +4,13 @@
 
 #include "mbed_interface.h"
 #include "mbed_assert.h"
+#include "mbed_error.h"
 #include "mbed_shared_queues.h"
 #include "netsocket/nsapi_types.h"
 
 #include "stm32xx_emac_config.h"
 #include "stm32xx_emac.h"
+#include "stm32xx_eth_init.h"
 
 /* \brief Flags for worker thread */
 #define FLAG_RX                 1
@@ -23,26 +25,6 @@
 #define STM_ETH_MTU_SIZE        1500
 #define STM_ETH_IF_NAME         "st"
 
-#if defined (__ICCARM__)   /*!< IAR Compiler */
-#pragma data_alignment=4
-#endif
-__ALIGN_BEGIN ETH_DMADescTypeDef DMARxDscrTab[ETH_RXBUFNB] __ALIGN_END; /* Ethernet Rx DMA Descriptor */
-
-#if defined (__ICCARM__)   /*!< IAR Compiler */
-#pragma data_alignment=4
-#endif
-__ALIGN_BEGIN ETH_DMADescTypeDef DMATxDscrTab[ETH_TXBUFNB] __ALIGN_END; /* Ethernet Tx DMA Descriptor */
-
-#if defined (__ICCARM__)   /*!< IAR Compiler */
-#pragma data_alignment=4
-#endif
-__ALIGN_BEGIN uint8_t Rx_Buff[ETH_RXBUFNB][ETH_RX_BUF_SIZE] __ALIGN_END; /* Ethernet Receive Buffer */
-
-#if defined (__ICCARM__)   /*!< IAR Compiler */
-#pragma data_alignment=4
-#endif
-__ALIGN_BEGIN uint8_t Tx_Buff[ETH_TXBUFNB][ETH_TX_BUF_SIZE] __ALIGN_END; /* Ethernet Transmit Buffer */
-
 __weak uint8_t mbed_otp_mac_address(char *mac);
 void mbed_default_mac_address(char *mac);
 
@@ -50,13 +32,58 @@ void mbed_default_mac_address(char *mac);
 extern "C" {
 #endif
 
-void _eth_config_mac(ETH_HandleTypeDef *heth);
+extern void MPU_Config(void);
 void HAL_ETH_RxCpltCallback(ETH_HandleTypeDef *heth);
 void ETH_IRQHandler(void);
 
 #ifdef __cplusplus
 }
 #endif
+
+
+void _eth_config_mac(ETH_HandleTypeDef *heth)
+{
+    ETH_MACInitTypeDef macconf = {
+        .Watchdog = ETH_WATCHDOG_ENABLE,
+        .Jabber = ETH_JABBER_ENABLE,
+        .InterFrameGap = ETH_INTERFRAMEGAP_96BIT,
+        .CarrierSense = ETH_CARRIERSENCE_ENABLE,
+        .ReceiveOwn = ETH_RECEIVEOWN_ENABLE,
+        .LoopbackMode = ETH_LOOPBACKMODE_DISABLE,
+        .ChecksumOffload = ETH_CHECKSUMOFFLAOD_ENABLE,
+        .RetryTransmission = ETH_RETRYTRANSMISSION_DISABLE,
+        .AutomaticPadCRCStrip = ETH_AUTOMATICPADCRCSTRIP_DISABLE,
+        .BackOffLimit = ETH_BACKOFFLIMIT_10,
+        .DeferralCheck = ETH_DEFFERRALCHECK_DISABLE,
+        .ReceiveAll = ETH_RECEIVEAll_DISABLE,
+        .SourceAddrFilter = ETH_SOURCEADDRFILTER_DISABLE,
+        .PassControlFrames = ETH_PASSCONTROLFRAMES_BLOCKALL,
+        .BroadcastFramesReception = ETH_BROADCASTFRAMESRECEPTION_ENABLE,
+        .DestinationAddrFilter = ETH_DESTINATIONADDRFILTER_NORMAL,
+        .PromiscuousMode = ETH_PROMISCUOUS_MODE_DISABLE,
+        .MulticastFramesFilter = ETH_MULTICASTFRAMESFILTER_NONE, // Disable multicast filter
+        .UnicastFramesFilter = ETH_UNICASTFRAMESFILTER_PERFECT,
+        .HashTableHigh = 0x0,
+        .HashTableLow = 0x0,
+        .PauseTime = 0x0,
+        .ZeroQuantaPause = ETH_ZEROQUANTAPAUSE_DISABLE,
+        .PauseLowThreshold = ETH_PAUSELOWTHRESHOLD_MINUS4,
+        .UnicastPauseFrameDetect = ETH_UNICASTPAUSEFRAMEDETECT_DISABLE,
+        .ReceiveFlowControl = ETH_RECEIVEFLOWCONTROL_DISABLE,
+        .TransmitFlowControl = ETH_TRANSMITFLOWCONTROL_DISABLE,
+        .VLANTagComparison = ETH_VLANTAGCOMPARISON_16BIT,
+        .VLANTagIdentifier = 0x0
+    };
+
+    if (heth->Init.ChecksumMode == ETH_CHECKSUM_BY_HARDWARE) {
+        macconf.ChecksumOffload = ETH_CHECKSUMOFFLAOD_ENABLE;
+    } else {
+        macconf.ChecksumOffload = ETH_CHECKSUMOFFLAOD_DISABLE;
+    }
+
+    (void) HAL_ETH_ConfigMAC(heth, &macconf);
+}
+
 
 /**
  * Ethernet Rx Transfer completed callback
@@ -84,6 +111,7 @@ void ETH_IRQHandler(void)
     HAL_ETH_IRQHandler(&emac.EthHandle);
 }
 
+
 STM32_EMAC::STM32_EMAC()
     : thread(0)
 {
@@ -106,6 +134,10 @@ static osThreadId_t create_new_thread(const char *threadName, void (*thread)(voi
  */
 bool STM32_EMAC::low_level_init_successful()
 {
+#if defined (TARGET_STM32F7)
+    MPU_Config();
+#endif /* TARGET_STM32F7 */
+
     /* Init ETH */
     uint8_t MACAddr[6];
     EthHandle.Instance = ETH;
@@ -127,19 +159,28 @@ bool STM32_EMAC::low_level_init_successful()
     EthHandle.Init.RxMode = ETH_RXINTERRUPT_MODE;
     EthHandle.Init.ChecksumMode = ETH_CHECKSUM_BY_SOFTWARE;
     EthHandle.Init.MediaInterface = ETH_MEDIA_INTERFACE_RMII;
-    HAL_ETH_Init(&EthHandle);
+
+    if (HAL_ETH_Init(&EthHandle) != HAL_OK) {
+        error("HAL_ETH_Init error\n");
+    }
 
     /* Initialize Tx Descriptors list: Chain Mode */
-    HAL_ETH_DMATxDescListInit(&EthHandle, DMATxDscrTab, &Tx_Buff[0][0], ETH_TXBUFNB);
+    if (HAL_ETH_DMATxDescListInit(&EthHandle, DMATxDscrTab, &Tx_Buff[0][0], ETH_TXBUFNB) != HAL_OK) {
+        error("HAL_ETH_DMATxDescListInit error\n");
+    }
 
     /* Initialize Rx Descriptors list: Chain Mode  */
-    HAL_ETH_DMARxDescListInit(&EthHandle, DMARxDscrTab, &Rx_Buff[0][0], ETH_RXBUFNB);
+    if (HAL_ETH_DMARxDescListInit(&EthHandle, DMARxDscrTab, &Rx_Buff[0][0], ETH_RXBUFNB) != HAL_OK) {
+        error("HAL_ETH_DMARxDescListInit error\n");
+    }
 
     /* Configure MAC */
     _eth_config_mac(&EthHandle);
 
     /* Enable MAC and DMA transmission and reception */
-    HAL_ETH_Start(&EthHandle);
+    if (HAL_ETH_Start(&EthHandle) != HAL_OK) {
+        error("HAL_ETH_Start error\n");
+    }
 
     return true;
 }
@@ -212,8 +253,13 @@ bool STM32_EMAC::link_out(emac_mem_buf_t *buf)
         framelength = framelength + byteslefttocopy;
     }
 
+#if defined (TARGET_STM32F7)
+    SCB_CleanInvalidateDCache();
+#endif /* TARGET_STM32F7 */
+
     /* Prepare transmit descriptors to give to DMA */
-    HAL_ETH_TransmitFrame(&EthHandle, framelength);
+    if (HAL_ETH_TransmitFrame(&EthHandle, framelength) != HAL_OK) {
+    }
 
     success = true;
 
@@ -271,6 +317,10 @@ int STM32_EMAC::low_level_input(emac_mem_buf_t **buf)
         /* Allocate a memory buffer chain from buffer pool */
         *buf = memory_manager->alloc_pool(len, 0);
     }
+
+#if defined (TARGET_STM32F7)
+    SCB_CleanInvalidateDCache();
+#endif /* TARGET_STM32F7 */
 
     if (*buf != NULL) {
         dmarxdesc = EthHandle.RxFrameInfos.FSRxDesc;

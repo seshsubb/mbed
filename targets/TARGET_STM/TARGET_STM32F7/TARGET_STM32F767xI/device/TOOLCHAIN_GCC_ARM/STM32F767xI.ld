@@ -11,7 +11,11 @@
 MEMORY
 { 
   FLASH (rx) : ORIGIN = MBED_APP_START, LENGTH = MBED_APP_SIZE
-  RAM (rwx)  : ORIGIN = 0x200001F8, LENGTH = 512K - 0x1F8
+  RAM (xrw)  : ORIGIN = 0x200001F8, LENGTH = 496K - 0x1F8 // DTCM 128K + SRAM1 368K
+  Memory_B1(xrw) : ORIGIN = 0x2007C000, LENGTH = 0x80   // SRAM2 : ETH_DMADescTypeDef * ETH_RXBUFNB
+  Memory_B2(xrw) : ORIGIN = 0x2007C080, LENGTH = 0x80   // SRAM2 : ETH_DMADescTypeDef * ETH_TXBUFNB
+  Memory_B3(xrw) : ORIGIN = 0x2007C100, LENGTH = 0x17d0 // SRAM2 : ETH_RXBUFNB * ETH_RX_BUF_SIZE
+  Memory_B4(xrw) : ORIGIN = 0x2007D8D0, LENGTH = 0x17d0 // SRAM2 : ETH_TXBUFNB * ETH_TX_BUF_SIZE
 }
 
 /* Linker script to place sections and symbol values. Should be used together
@@ -141,6 +145,11 @@ SECTIONS
         *(.heap*)
         __HeapLimit = .;
     } > RAM
+
+    .RxDecripSection  (NOLOAD) : { *(.DMARxDscrTab_section) } >Memory_B1
+    .TxDescripSection (NOLOAD) : { *(.DMATxDscrTab_section) } >Memory_B2
+    .RxarraySection   (NOLOAD) : { *(.Rx_Buff_section)      } >Memory_B3
+    .TxarraySection   (NOLOAD) : { *(.Tx_Buff_section)      } >Memory_B4
 
     /* .stack_dummy section doesn't contains any symbols. It is only
      * used for linker to calculate size of stack sections, and assign

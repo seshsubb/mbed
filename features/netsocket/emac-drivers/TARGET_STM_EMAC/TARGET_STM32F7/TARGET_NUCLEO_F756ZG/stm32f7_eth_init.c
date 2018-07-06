@@ -26,37 +26,90 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef USE_USER_DEFINED_HAL_ETH_MSPINIT
-
 #include "stm32f7xx_hal.h"
+
+void MPU_Config(void)
+{
+    MPU_Region_InitTypeDef MPU_InitStruct = {0};
+
+    /* Disable the MPU */
+    HAL_MPU_Disable();
+
+    /* Configure the MPU attributes as WT for SRAM */
+    MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+    MPU_InitStruct.BaseAddress = 0x200001C8;
+    MPU_InitStruct.Size = MPU_REGION_SIZE_256KB;
+    MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+    MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+    MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE;
+    MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
+    MPU_InitStruct.Number = MPU_REGION_NUMBER0;
+    MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
+    MPU_InitStruct.SubRegionDisable = 0x00;
+    MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
+
+    HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+    /* Configure the MPU as Normal Non Cacheable for Ethernet Buffers in the SRAM2 */
+    MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+    MPU_InitStruct.BaseAddress = 0x2004C000;
+    MPU_InitStruct.Size = MPU_REGION_SIZE_16KB;
+    MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+    MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+    MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
+    MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
+    MPU_InitStruct.Number = MPU_REGION_NUMBER1;
+    MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL1;
+    MPU_InitStruct.SubRegionDisable = 0x00;
+    MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
+
+    HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+    /* Configure the MPU as Device for Ethernet Descriptors in the SRAM2 */
+    MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+    MPU_InitStruct.BaseAddress = 0x2004C000;
+    MPU_InitStruct.Size = MPU_REGION_SIZE_256B;
+    MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+    MPU_InitStruct.IsBufferable = MPU_ACCESS_BUFFERABLE;
+    MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
+    MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
+    MPU_InitStruct.Number = MPU_REGION_NUMBER2;
+    MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
+    MPU_InitStruct.SubRegionDisable = 0x00;
+    MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
+
+    HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+    /* Enable the MPU */
+    HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
+}
+
+#ifndef USE_USER_DEFINED_HAL_ETH_MSPINIT
 
 /**
  * Override HAL Eth Init function
  */
 void HAL_ETH_MspInit(ETH_HandleTypeDef *heth)
 {
-    GPIO_InitTypeDef GPIO_InitStructure;
+    GPIO_InitTypeDef GPIO_InitStructure = {0} ;
     if (heth->Instance == ETH) {
-        /* Disable DCache for STM32F7 family */
-        SCB_DisableDCache();
-
         /* Enable GPIOs clocks */
         __HAL_RCC_GPIOA_CLK_ENABLE();
         __HAL_RCC_GPIOB_CLK_ENABLE();
         __HAL_RCC_GPIOC_CLK_ENABLE();
         __HAL_RCC_GPIOG_CLK_ENABLE();
 
-        /** ETH GPIO Configuration
-          RMII_REF_CLK ----------------------> PA1
-          RMII_MDIO -------------------------> PA2
-          RMII_MDC --------------------------> PC1
-          RMII_MII_CRS_DV -------------------> PA7
-          RMII_MII_RXD0 ---------------------> PC4
-          RMII_MII_RXD1 ---------------------> PC5
-          RMII_MII_RXER ---------------------> PG2
-          RMII_MII_TX_EN --------------------> PG11
-          RMII_MII_TXD0 ---------------------> PG13
-          RMII_MII_TXD1 ---------------------> PB13
+        /** NUCLEO-144 ETH GPIO Configuration
+          RMII_REF_CLK ----------------------> PA1  ETH_RX_CLK
+          RMII_MDIO -------------------------> PA2  ETH_MDIO
+          RMII_MDC --------------------------> PC1  ETH_MDC
+          RMII_MII_CRS_DV -------------------> PA7  ETH_CRS_DV
+          RMII_MII_RXD0 ---------------------> PC4  ETH_RXD0
+          RMII_MII_RXD1 ---------------------> PC5  ETH_RXD1
+          RMII_MII_RXER ---------------------> Not connected
+          RMII_MII_TX_EN --------------------> PG11 ETH_TX_EN
+          RMII_MII_TXD0 ---------------------> PG13 ETH_TXD0
+          RMII_MII_TXD1 ---------------------> PB13 ETH_TXD1
          */
         /* Configure PA1, PA2 and PA7 */
         GPIO_InitStructure.Speed = GPIO_SPEED_HIGH;
@@ -74,8 +127,8 @@ void HAL_ETH_MspInit(ETH_HandleTypeDef *heth)
         GPIO_InitStructure.Pin = GPIO_PIN_1 | GPIO_PIN_4 | GPIO_PIN_5;
         HAL_GPIO_Init(GPIOC, &GPIO_InitStructure);
 
-        /* Configure PG2, PG11 and PG13 */
-        GPIO_InitStructure.Pin =  GPIO_PIN_2 | GPIO_PIN_11 | GPIO_PIN_13;
+        /* Configure PG11 and PG13 */
+        GPIO_InitStructure.Pin =  GPIO_PIN_11 | GPIO_PIN_13;
         HAL_GPIO_Init(GPIOG, &GPIO_InitStructure);
 
         /* Enable the Ethernet global Interrupt */
@@ -96,22 +149,10 @@ void HAL_ETH_MspDeInit(ETH_HandleTypeDef *heth)
         /* Peripheral clock disable */
         __HAL_RCC_ETH_CLK_DISABLE();
 
-        /** ETH GPIO Configuration
-          RMII_REF_CLK ----------------------> PA1
-          RMII_MDIO -------------------------> PA2
-          RMII_MDC --------------------------> PC1
-          RMII_MII_CRS_DV -------------------> PA7
-          RMII_MII_RXD0 ---------------------> PC4
-          RMII_MII_RXD1 ---------------------> PC5
-          RMII_MII_RXER ---------------------> PG2
-          RMII_MII_TX_EN --------------------> PG11
-          RMII_MII_TXD0 ---------------------> PG13
-          RMII_MII_TXD1 ---------------------> PB13
-         */
         HAL_GPIO_DeInit(GPIOA, GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_7);
         HAL_GPIO_DeInit(GPIOB, GPIO_PIN_13);
         HAL_GPIO_DeInit(GPIOC, GPIO_PIN_1 | GPIO_PIN_4 | GPIO_PIN_5);
-        HAL_GPIO_DeInit(GPIOG, GPIO_PIN_2 | GPIO_PIN_11 | GPIO_PIN_13);
+        HAL_GPIO_DeInit(GPIOG, GPIO_PIN_11 | GPIO_PIN_13);
 
         /* Disable the Ethernet global Interrupt */
         NVIC_DisableIRQ(ETH_IRQn);
