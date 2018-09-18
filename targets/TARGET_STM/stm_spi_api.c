@@ -187,6 +187,11 @@ void spi_init(spi_t *obj, PinName mosi, PinName miso, PinName sclk, PinName ssel
     handle->Init.FirstBit          = SPI_FIRSTBIT_MSB;
     handle->Init.TIMode            = SPI_TIMODE_DISABLE;
 
+#if TARGET_STM32H7
+    handle->Init.NSSPMode          = SPI_NSS_PULSE_DISABLE;
+    handle->Init.MasterKeepIOState = SPI_MASTER_KEEP_IO_STATE_ENABLE;
+#endif
+
     init_spi(obj);
 }
 
@@ -311,7 +316,7 @@ void spi_format(spi_t *obj, int bits, int mode, int slave)
  */
 extern int spi_get_clock_freq(spi_t *obj);
 
-static const uint16_t baudrate_prescaler_table[] =  {SPI_BAUDRATEPRESCALER_2,
+static const uint32_t baudrate_prescaler_table[] =  {SPI_BAUDRATEPRESCALER_2,
                                                      SPI_BAUDRATEPRESCALER_4,
                                                      SPI_BAUDRATEPRESCALER_8,
                                                      SPI_BAUDRATEPRESCALER_16,
@@ -394,6 +399,16 @@ int spi_master_write(spi_t *obj, int value)
     if (handle->Init.Direction == SPI_DIRECTION_1LINE) {
         return HAL_SPI_Transmit(handle, (uint8_t *)&value, 1, TIMEOUT_1_BYTE);
     }
+#if TARGET_STM32H7
+    else {
+        int retval = 0;
+        if (HAL_SPI_TransmitReceive(handle, (uint8_t *)&value, (uint8_t *)&retval, 1, TIMEOUT_1_BYTE) != HAL_OK) {
+            error("spi transmit receive error\n");
+        }
+        return retval;
+    }
+#else
+
 
 #if defined(LL_SPI_RX_FIFO_TH_HALF)
     /*  Configure the default data size */
@@ -406,7 +421,7 @@ int spi_master_write(spi_t *obj, int value)
 
     /*  Here we're using LL which means direct registers access
      *  There is no error management, so we may end up looping
-     *  infinitely here in case of faulty device for insatnce,
+     *  infinitely here in case of faulty device for instance,
      *  but this will increase performances significantly
      */
 
@@ -435,6 +450,7 @@ int spi_master_write(spi_t *obj, int value)
     } else {
         return LL_SPI_ReceiveData8(SPI_INST(obj));
     }
+#endif
 }
 
 int spi_master_block_write(spi_t *obj, const char *tx_buffer, int tx_length,
